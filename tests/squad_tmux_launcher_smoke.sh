@@ -11,6 +11,21 @@ cleanup() {
 }
 trap cleanup EXIT
 
+test_home="$tmpdir/home"
+mkdir -p "$test_home/.codex/prompts"
+cat >"$test_home/.codex/prompts/squad.md" <<'EOF'
+---
+description: Join squad multi-agent collaboration. Usage: /squad <role> [custom-id]
+squad-version: test
+---
+
+You are joining a squad multi-agent collaboration team.
+
+Your join arguments: $ARGUMENTS
+
+Run squad init, join, and receive.
+EOF
+
 project_dir="$tmpdir/project"
 mkdir -p "$project_dir/.squad/prompts"
 git -C "$tmpdir" init -b main project >/dev/null
@@ -78,7 +93,7 @@ cat >"$project_dir/.squad/prompts/inspector.md" <<'EOF'
 Focus on whether the README, path handling, and Claude install compatibility stay aligned with the implementation.
 EOF
 
-bash "$launcher" "$project_dir" --dry-run --no-setup --no-attach
+HOME="$test_home" bash "$launcher" "$project_dir" --dry-run --no-setup --no-attach
 
 quickstart_dir="$project_dir/.squad/quickstart/feishu-claude-support"
 prompt_file="$quickstart_dir/generated-manager.prompt.md"
@@ -140,7 +155,7 @@ cat >"$mixed_clients_repo/.squad/run-task.md" <<'EOF'
 Run codex for manager and inspector, and claude for workers.
 EOF
 
-bash "$launcher" "$mixed_clients_repo" --dry-run --no-setup --no-attach >/dev/null
+HOME="$test_home" bash "$launcher" "$mixed_clients_repo" --dry-run --no-setup --no-attach >/dev/null
 
 mixed_summary="$mixed_clients_repo/.squad/quickstart/generated-run-summary.md"
 mixed_map="$mixed_clients_repo/.squad/quickstart/generated-terminal-map.md"
@@ -149,9 +164,9 @@ grep -q 'Manager launch: `codex --dangerously-bypass-approvals-and-sandbox`' "$m
 grep -q 'Worker launch: `claude --dangerously-skip-permissions`' "$mixed_summary"
 grep -q 'Inspector launch: `codex --dangerously-bypass-approvals-and-sandbox`' "$mixed_summary"
 grep -q 'Setup platforms: `codex, claude`' "$mixed_summary"
-grep -q '| 0 | `manager` | `codex --dangerously-bypass-approvals-and-sandbox` | `/squad manager` |' "$mixed_map"
+grep -q '| 0 | `manager` | `codex --dangerously-bypass-approvals-and-sandbox` | `expanded codex squad prompt (manager)` |' "$mixed_map"
 grep -q '| 1 | `worker` | `claude --dangerously-skip-permissions` | `/squad worker` |' "$mixed_map"
-grep -q '| 3 | `inspector` | `codex --dangerously-bypass-approvals-and-sandbox` | `/squad inspector` |' "$mixed_map"
+grep -q '| 3 | `inspector` | `codex --dangerously-bypass-approvals-and-sandbox` | `expanded codex squad prompt (inspector)` |' "$mixed_map"
 
 generic_defaults_repo="$tmpdir/generic-defaults-repo"
 mkdir -p "$generic_defaults_repo/.squad"
@@ -174,7 +189,7 @@ cat >"$generic_defaults_repo/.squad/run-task.md" <<'EOF'
 Ensure generic default runtime fields work for all panes.
 EOF
 
-bash "$launcher" "$generic_defaults_repo" --dry-run --no-setup --no-attach >/dev/null
+HOME="$test_home" bash "$launcher" "$generic_defaults_repo" --dry-run --no-setup --no-attach >/dev/null
 
 generic_defaults_summary="$generic_defaults_repo/.squad/quickstart/generated-run-summary.md"
 generic_defaults_map="$generic_defaults_repo/.squad/quickstart/generated-terminal-map.md"
@@ -183,7 +198,7 @@ grep -q 'Manager launch: `codex --dangerously-bypass-approvals-and-sandbox`' "$g
 grep -q 'Worker launch: `codex --dangerously-bypass-approvals-and-sandbox`' "$generic_defaults_summary"
 grep -q 'Inspector launch: `codex --dangerously-bypass-approvals-and-sandbox`' "$generic_defaults_summary"
 grep -q 'Setup platforms: `codex`' "$generic_defaults_summary"
-grep -q '| 0 | `manager` | `codex --dangerously-bypass-approvals-and-sandbox` | `/squad manager` |' "$generic_defaults_map"
+grep -q '| 0 | `manager` | `codex --dangerously-bypass-approvals-and-sandbox` | `expanded codex squad prompt (manager)` |' "$generic_defaults_map"
 
 role_args_repo="$tmpdir/role-args-repo"
 mkdir -p "$role_args_repo/.squad"
@@ -207,7 +222,7 @@ cat >"$role_args_repo/.squad/run-task.md" <<'EOF'
 Ensure role-specific command does not inherit claude args by default.
 EOF
 
-bash "$launcher" "$role_args_repo" --dry-run --no-setup --no-attach >/dev/null
+HOME="$test_home" bash "$launcher" "$role_args_repo" --dry-run --no-setup --no-attach >/dev/null
 
 role_args_summary="$role_args_repo/.squad/quickstart/generated-run-summary.md"
 grep -q 'Manager launch: `codex`' "$role_args_summary"
@@ -239,7 +254,7 @@ EOF
 Minimal task brief
 EOF
 
-  output="$(HOME="$tmpdir/home" bash "$launcher" "$repo_dir" --dry-run --no-setup --no-attach)"
+  output="$(HOME="$test_home" bash "$launcher" "$repo_dir" --dry-run --no-setup --no-attach)"
   same_name_roots+=("$(printf '%s\n' "$output" | awk -F': ' '/^Workspace root: /{print $2; exit}')")
   test -f "$repo_dir/.squad/quickstart/feat-smoke/generated-manager.prompt.md"
 done
@@ -283,8 +298,8 @@ cat >"$tilde_repo/.squad/run-task.md" <<'EOF'
 Check tilde command expansion
 EOF
 
-HOME="$tmpdir/home" bash "$launcher" "$tilde_repo" --dry-run --no-setup --no-attach >/dev/null
-grep -q "$tmpdir/home/bin/claude --dangerously-skip-permissions" "$tilde_repo/.squad/quickstart/generated-run-summary.md"
+HOME="$test_home" bash "$launcher" "$tilde_repo" --dry-run --no-setup --no-attach >/dev/null
+grep -q "$test_home/bin/claude --dangerously-skip-permissions" "$tilde_repo/.squad/quickstart/generated-run-summary.md"
 
 superpowers_repo="$tmpdir/superpowers-repo"
 mkdir -p "$superpowers_repo/.squad" "$superpowers_repo/docs/superpowers/specs" "$superpowers_repo/docs/superpowers/plans"
@@ -324,7 +339,7 @@ cat >"$superpowers_repo/docs/superpowers/plans/2026-03-30-minimal-qr-connect-sur
 Implement the QR connect surface.
 EOF
 
-bash "$launcher" "$superpowers_repo" --dry-run --no-setup --no-attach >/dev/null
+HOME="$test_home" bash "$launcher" "$superpowers_repo" --dry-run --no-setup --no-attach >/dev/null
 
 superpowers_prompt="$superpowers_repo/.squad/quickstart/generated-manager.prompt.md"
 superpowers_inspector_prompt="$superpowers_repo/.squad/quickstart/generated-inspector.prompt.md"
@@ -386,7 +401,7 @@ cat >"$custom_discovery_repo/workitems/plans/2026-03-31-remote-control-gateway-p
 Support configurable plan/spec discovery.
 EOF
 
-bash "$launcher" "$custom_discovery_repo" --dry-run --no-setup --no-attach >/dev/null
+HOME="$test_home" bash "$launcher" "$custom_discovery_repo" --dry-run --no-setup --no-attach >/dev/null
 
 custom_prompt="$custom_discovery_repo/.squad/quickstart/generated-manager.prompt.md"
 custom_inspector_prompt="$custom_discovery_repo/.squad/quickstart/generated-inspector.prompt.md"

@@ -91,13 +91,14 @@ scripts/squad-tmux-launch.sh /path/to/project --dry-run
 - 或自动发现 `docs/superpowers/...` 下最新的 implementation plan 和匹配 spec
 - 或通过 `.squad/launcher.yaml -> task_discovery` 使用自定义发现规则
 - 在 `.squad/quickstart/` 下生成 manager / inspector prompt
-- 启动平铺布局的 `tmux` 会话，并自动向配置好的 AI CLI pane 注入 `/squad` 命令
+- 启动平铺布局的 `tmux` 会话，并自动向配置好的 AI CLI pane 注入对应角色的加入输入
 - 在启动 agent 前可选地创建独立 git worktree
 
 依赖：
 - `tmux`
 - `ruby`（用于解析 `launcher.yaml`）
 - 你在配置里指定的 AI CLI 命令（例如 `claude`、`codex`、`gemini`、`opencode`）
+- 支持 slash 命令的客户端会收到 `/squad <role>`；Codex pane 会直接收到展开后的 `~/.codex/prompts/squad.md` 加入 prompt
 
 这个启动器刻意保持在核心 Rust CLI 之外。它是给需要固定化多终端协作流程的用户准备的可选自动化能力。
 

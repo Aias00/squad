@@ -40,6 +40,8 @@ Client config:
   runtime.worker_command / *_args        Worker-specific override
   runtime.inspector_command / *_args     Inspector-specific override
   Legacy aliases runtime.claude_command / runtime.claude_args are still supported
+  Slash-capable clients receive `/squad <role>`; Codex panes receive the expanded
+  `~/.codex/prompts/squad.md` join prompt directly
 
 Worktree config:
   <project-dir>/.squad/launcher.yaml -> workspace.worktree
@@ -138,6 +140,51 @@ send_tmux_text() {
   tmux paste-buffer -t "$target"
   tmux send-keys -t "$target" Enter
   tmux delete-buffer
+}
+
+strip_markdown_frontmatter() {
+  local file_path="$1"
+  local line=""
+  local body=""
+  local first_line=1
+  local in_frontmatter=0
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if (( first_line == 1 )); then
+      first_line=0
+      if [[ "$line" == "---" ]]; then
+        in_frontmatter=1
+        continue
+      fi
+    fi
+
+    if (( in_frontmatter == 1 )); then
+      if [[ "$line" == "---" ]]; then
+        in_frontmatter=0
+      fi
+      continue
+    fi
+
+    body+="$line"$'\n'
+  done <"$file_path"
+
+  printf '%s' "${body%$'\n'}"
+}
+
+render_codex_join_prompt() {
+  local join_args="$1"
+  local codex_prompt_template="$HOME/.codex/prompts/squad.md"
+  local prompt_body=""
+
+  if [[ ! -f "$codex_prompt_template" ]]; then
+    echo "Error: Codex squad prompt template not found: $codex_prompt_template" >&2
+    echo "Run \`squad setup codex\` first, or use --no-setup only after the template exists." >&2
+    return 1
+  fi
+
+  prompt_body="$(strip_markdown_frontmatter "$codex_prompt_template")"
+  prompt_body="${prompt_body//\$ARGUMENTS/$join_args}"
+  printf '%s' "$prompt_body"
 }
 
 capture_pane_text() {
@@ -806,10 +853,10 @@ build_terminal_map() {
     echo "- tmux session: \`$session_name\`"
     echo "- workspace: \`$workspace_dir\`"
     echo
-    echo "| Pane | Role | Launch | Slash Command |"
+    echo "| Pane | Role | Launch | Join Input |"
     echo "| --- | --- | --- | --- |"
     for i in "${!pane_labels[@]}"; do
-      echo "| $i | \`${pane_labels[$i]}\` | \`${pane_launch_display[$i]}\` | \`${pane_commands[$i]}\` |"
+      echo "| $i | \`${pane_labels[$i]}\` | \`${pane_launch_display[$i]}\` | \`${pane_join_display[$i]}\` |"
     done
   } >"$output_path"
 }
@@ -1179,27 +1226,43 @@ summary_file="$quickstart_dir/generated-run-summary.md"
 terminal_map_file="$quickstart_dir/generated-terminal-map.md"
 
 pane_labels=("$manager_role")
-pane_commands=("/squad $manager_role")
+pane_join_args=("$manager_role")
 pane_launch_commands=("$manager_launch_command")
 pane_exec_commands=("$manager_command")
 pane_launch_display=("$manager_launch_command")
 for ((i = 1; i <= workers; i++)); do
   if (( i == 1 )); then
     pane_labels+=("$worker_role")
-    pane_commands+=("/squad $worker_role")
+    pane_join_args+=("$worker_role")
   else
     pane_labels+=("${worker_role}-${i}")
-    pane_commands+=("/squad $worker_role ${worker_role}-${i}")
+    pane_join_args+=("$worker_role ${worker_role}-${i}")
   fi
   pane_launch_commands+=("$worker_launch_command")
   pane_exec_commands+=("$worker_command")
   pane_launch_display+=("$worker_launch_command")
 done
 pane_labels+=("$inspector_role")
-pane_commands+=("/squad $inspector_role")
+pane_join_args+=("$inspector_role")
 pane_launch_commands+=("$inspector_launch_command")
 pane_exec_commands+=("$inspector_command")
 pane_launch_display+=("$inspector_launch_command")
+
+pane_join_display=()
+pane_join_platforms=()
+for i in "${!pane_labels[@]}"; do
+  join_args="${pane_join_args[$i]}"
+  join_display="/squad $join_args"
+  join_platform=""
+  if platform="$(platform_for_command "${pane_exec_commands[$i]}" 2>/dev/null)"; then
+    join_platform="$platform"
+    if [[ "$platform" == "codex" ]]; then
+      join_display="expanded codex squad prompt ($join_args)"
+    fi
+  fi
+  pane_join_display+=("$join_display")
+  pane_join_platforms+=("$join_platform")
+done
 
 unique_items=()
 for role_command in "$manager_command" "$worker_command" "$inspector_command"; do
@@ -1301,23 +1364,35 @@ for i in "${!pane_labels[@]}"; do
   wait_for_pane_ready "$session_name":0."$i" 30
 done
 
-echo "[4/6] Sending squad commands"
-for i in "${!pane_commands[@]}"; do
-  send_tmux_text "$session_name":0."$i" "${pane_commands[$i]}"
+pane_join_inputs=()
+for i in "${!pane_labels[@]}"; do
+  join_args="${pane_join_args[$i]}"
+  join_input="/squad $join_args"
+  if [[ "${pane_join_platforms[$i]}" == "codex" ]]; then
+    join_input="$(render_codex_join_prompt "$join_args")"
+  fi
+  pane_join_inputs+=("$join_input")
+done
+
+echo "[4/6] Sending join inputs"
+for i in "${!pane_join_inputs[@]}"; do
+  send_tmux_text "$session_name":0."$i" "${pane_join_inputs[$i]}"
 done
 
 for attempt in 1 2 3; do
-  if (( "$(current_agent_count "$workspace_dir")" >= ${#pane_commands[@]} )); then
+  if (( "$(current_agent_count "$workspace_dir")" >= ${#pane_join_inputs[@]} )); then
     break
   fi
   sleep 2
-  for i in "${!pane_commands[@]}"; do
-    resubmit_pending_squad_command_if_needed "$session_name":0."$i" "${pane_commands[$i]}" || true
+  for i in "${!pane_join_inputs[@]}"; do
+    if [[ "${pane_join_display[$i]}" == /squad* ]]; then
+      resubmit_pending_squad_command_if_needed "$session_name":0."$i" "${pane_join_display[$i]}" || true
+    fi
   done
 done
 
 echo "[5/6] Waiting for agents to join squad"
-wait_for_agent_count "$workspace_dir" "${#pane_commands[@]}" 90
+wait_for_agent_count "$workspace_dir" "${#pane_join_inputs[@]}" 90
 
 echo "[6/6] Sending manager and inspector prompts"
 send_tmux_text "$session_name":0.0 "$(cat "$prompt_file")"

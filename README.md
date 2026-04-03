@@ -89,13 +89,14 @@ It can:
 - or auto-discover the latest implementation plan + matching spec from `docs/superpowers/...`
 - or use custom discovery globs from `.squad/launcher.yaml -> task_discovery`
 - generate manager / inspector prompt files under `.squad/quickstart/`
-- start a tiled `tmux` session and inject `/squad` commands into the configured AI CLI panes
+- start a tiled `tmux` session and inject role-specific join inputs into the configured AI CLI panes
 - optionally create an isolated git worktree before launching agents
 
 Requirements:
 - `tmux`
 - `ruby` (used to parse `launcher.yaml`)
 - the configured AI CLI commands (for example `claude`, `codex`, `gemini`, or `opencode`)
+- slash-command capable clients receive `/squad <role>`; Codex panes receive the expanded `~/.codex/prompts/squad.md` join prompt directly
 
 This launcher is intentionally separate from the core Rust CLI. Treat it as optional automation for people who want a repeatable multi-terminal workflow.
 
