@@ -16,6 +16,16 @@ shell_join() {
   printf '%s' "$joined"
 }
 
+expand_home_path() {
+  local path="$1"
+  if [[ "$path" == "~" ]]; then
+    path="$HOME"
+  elif [[ "${path:0:2}" == "~/" ]]; then
+    path="$HOME/${path:2}"
+  fi
+  printf '%s' "$path"
+}
+
 pane_command_candidates() {
   local command_name="$1"
   local resolved=""
@@ -30,14 +40,14 @@ pane_command_candidates() {
     local existing=""
     local found=0
     [[ -n "$candidate" ]] || return 0
-    set +u
-    for existing in "${candidates[@]}"; do
-      if [[ "$existing" == "$candidate" ]]; then
-        found=1
-        break
-      fi
-    done
-    set -u
+    if (( ${#candidates[@]} > 0 )); then
+      for existing in "${candidates[@]}"; do
+        if [[ "$existing" == "$candidate" ]]; then
+          found=1
+          break
+        fi
+      done
+    fi
     if (( found == 1 )); then
       return 0
     fi
@@ -82,9 +92,9 @@ pane_command_candidates() {
     fi
   fi
 
-  set +u
-  printf '%s\n' "${candidates[@]}"
-  set -u
+  if (( ${#candidates[@]} > 0 )); then
+    printf '%s\n' "${candidates[@]}"
+  fi
 }
 
 is_truthy() {
@@ -107,14 +117,32 @@ slugify_path_component() {
   printf '%s' "${value:-worktree}"
 }
 
+copy_array_or_empty() {
+  local target_name="$1"
+  local source_name="$2"
+
+  eval "$target_name=()"
+  if ! declare -p "$source_name" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  eval 'if ((${#'"$source_name"'[@]} > 0)); then '"$target_name"'=("${'"$source_name"'[@]}"); fi'
+}
+
+repo_worktree_location_slug() {
+  local repo_root="$1"
+  local normalized="${repo_root#/}"
+  printf '%s' "$(slugify_path_component "$normalized")"
+}
+
 expand_path_from_base() {
   local path="$1"
   local base_dir="$2"
 
   if [[ "$path" == "~" ]]; then
     path="$HOME"
-  elif [[ "$path" == "~/"* ]]; then
-    path="$HOME/${path#~/}"
+  elif [[ "${path:0:2}" == "~/" ]]; then
+    path="$HOME/${path:2}"
   elif [[ "$path" != /* ]]; then
     path="$base_dir/$path"
   fi
@@ -139,6 +167,70 @@ resolve_worktree_path() {
   else
     printf '%s' "$root"
   fi
+}
+
+path_is_within() {
+  local path="$1"
+  local base="$2"
+  case "$path" in
+    */../*|*/./*|../*|./*|*/..|*/.)
+      return 1
+      ;;
+  esac
+  [[ "$path" == "$base" || "$path" == "$base"/* ]]
+}
+
+pane_capture_has_workspace_trust_prompt() {
+  local capture="$1"
+  [[ "$capture" == *"Yes, I trust this folder"* ]] && [[ "$capture" == *"Enter to confirm"* ]]
+}
+
+pane_capture_has_interactive_prompt() {
+  local capture="$1"
+  [[ "$capture" == *"❯"* || "$capture" == *"›"* ]]
+}
+
+pane_capture_has_pending_command_input() {
+  local capture="$1"
+  local command_text="$2"
+  [[ -n "$command_text" ]] || return 1
+  [[ "$capture" == *"❯"*"$command_text"* ]]
+}
+
+pane_capture_has_squad_command_activity() {
+  local capture="$1"
+  case "$capture" in
+    *"Skill(/squad)"*|*"Bash(squad "*|*"Joined as "*|*"joining the squad"*|*"I'm joining the squad"*|*"I'll join the squad"*|*"No agents online."*|*"Initialized squad workspace."*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+ensure_repo_local_worktree_ignored() {
+  local repo_root="$1"
+  local path="$2"
+  local rel_path=""
+
+  if ! path_is_within "$path" "$repo_root"; then
+    return 0
+  fi
+
+  if [[ "$path" == "$repo_root" ]]; then
+    echo "Error: worktree path cannot be the repository root: $path" >&2
+    return 1
+  fi
+
+  rel_path="${path#$repo_root/}"
+  if git -C "$repo_root" check-ignore -q "$rel_path"; then
+    return 0
+  fi
+
+  echo "Error: repo-local worktree path is not ignored by git: $rel_path" >&2
+  echo "Add an ignore rule for that path or use a worktree location outside the repository." >&2
+  return 1
 }
 
 find_worktree_path_for_branch() {
@@ -174,6 +266,8 @@ ensure_git_worktree() {
   local dry_run="${5:-0}"
   local existing_branch_path=""
   local current_branch=""
+  local requested_common_dir=""
+  local repo_common_dir=""
 
   if [[ -z "$branch_name" ]]; then
     echo "Error: worktree branch name is required" >&2
@@ -187,6 +281,19 @@ ensure_git_worktree() {
   fi
 
   if [[ -f "$requested_path/.git" || -d "$requested_path/.git" ]]; then
+    requested_common_dir="$(git -C "$requested_path" rev-parse --git-common-dir 2>/dev/null || true)"
+    repo_common_dir="$(git -C "$repo_root" rev-parse --git-common-dir 2>/dev/null || true)"
+    if [[ -n "$requested_common_dir" && "$requested_common_dir" != /* ]]; then
+      requested_common_dir="$requested_path/$requested_common_dir"
+    fi
+    if [[ -n "$repo_common_dir" && "$repo_common_dir" != /* ]]; then
+      repo_common_dir="$repo_root/$repo_common_dir"
+    fi
+    if [[ -n "$requested_common_dir" && -n "$repo_common_dir" && "$requested_common_dir" != "$repo_common_dir" ]]; then
+      echo "Error: requested worktree path belongs to a different repository: $requested_path" >&2
+      return 1
+    fi
+
     current_branch="$(git -C "$requested_path" branch --show-current 2>/dev/null || true)"
     if [[ -n "$current_branch" && "$current_branch" != "$branch_name" ]]; then
       echo "Error: requested worktree path already exists on branch '$current_branch': $requested_path" >&2
