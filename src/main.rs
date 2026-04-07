@@ -858,12 +858,10 @@ fn cmd_receive(agent: &str, wait: bool, timeout_secs: u64, json: bool) -> Result
             } else {
                 println!("No new messages. Run `squad receive {agent} --wait` to keep listening.");
             }
+        } else if json {
+            print_json_messages(&store, messages)?;
         } else {
-            if json {
-                print_json_messages(&store, messages)?;
-            } else {
-                print_messages(&store, &messages, Some(agent))?;
-            }
+            print_messages(&store, &messages, Some(agent))?;
         }
         Ok(())
     }
